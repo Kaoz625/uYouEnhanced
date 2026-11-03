@@ -978,7 +978,18 @@ static void *UYTDownloadItemAudioLegKey = &UYTDownloadItemAudioLegKey;
     BOOL audioOnly = UYTIsAudioOnly(vid);
     if (url.absoluteString.length) UYTRegisterRemoteURLForVideoID(vid, url.absoluteString);
 
-    NSString *working = (isAudioLeg || audioOnly) ? UYTAudioOnlyURL(vid) : UYTGetResolvedURL(vid);
+    // The video leg of a video download takes the muxed stream whenever one
+    // exists (UYTResolvedVideoURL), and that file already carries the audio.
+    // Adaptive audio streams now answer 403 without a PO token, and a failed
+    // audio leg ends in UYTFallbackToVideoOnly, which never records the item
+    // in uYou's downloads table - it vanishes on the next launch. Fetch the
+    // same muxed file for the audio leg; the merge copies its MP4 audio track.
+    NSString *working = nil;
+    if (isAudioLeg && !audioOnly && !UYTStagedCanonicalPathFor(vid, @"m4a").length) {
+        NSString *muxed = UYTResolvedEntrySnapshot(vid)[@"muxed"];
+        if ([muxed isKindOfClass:[NSString class]] && muxed.length) working = muxed;
+    }
+    if (!working.length) working = (isAudioLeg || audioOnly) ? UYTAudioOnlyURL(vid) : UYTGetResolvedURL(vid);
     if (working.length) {
         NSURL *fixed = [NSURL URLWithString:working];
         if (fixed) {
