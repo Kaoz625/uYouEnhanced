@@ -320,6 +320,57 @@ static YTMainAppControlsOverlayView *UYTCurrentControlsOverlay(void) {
 }
 %end
 
+// Made-for-kids videos: YouTube greys out (disables) the action-bar Download
+// button, so its download sheet never opens and the sheet reroute above never
+// fires. Put our own tap on the button that opens uYou's downloader directly,
+// whether YouTube enabled the button or not.
+@interface UYTKidsDownloadTarget : NSObject
++ (instancetype)shared;
+- (void)tapped:(UIGestureRecognizer *)g;
+@end
+@implementation UYTKidsDownloadTarget
++ (instancetype)shared {
+    static UYTKidsDownloadTarget *t; static dispatch_once_t once;
+    dispatch_once(&once, ^{ t = [UYTKidsDownloadTarget new]; });
+    return t;
+}
+- (void)tapped:(UIGestureRecognizer *)g {
+    if (g.state != UIGestureRecognizerStateEnded) return;
+    YTMainAppControlsOverlayView *overlay = UYTCurrentControlsOverlay();
+    UYTDebugInfo(@"[uYouPlus] Download button tap -> uYou (overlay=%p)", overlay);
+    if (overlay) [overlay uYou];
+}
+@end
+
+static BOOL UYTIsDownloadButtonView(UIView *v) {
+    NSString *ident = v.accessibilityIdentifier;
+    return [ident isEqualToString:@"id.ui.add_to.offline.button"] ||
+           [ident isEqualToString:@"id.video.add_to.offline.button"];
+}
+
+%hook _ASDisplayView
+- (void)didMoveToWindow {
+    %orig;
+    if (!self.window || !IS_ENABLED(kReplaceYTDownloadWithuYou)) return;
+    NSString *ident = self.accessibilityIdentifier;
+    if (ident.length && [ident containsString:@"offline"]) {
+        UYTDebugInfo(@"[uYouPlus] offline-ish view id=%@ label=%@ enabled=%d",
+                     ident, self.accessibilityLabel, (int)self.userInteractionEnabled);
+    }
+    if (!UYTIsDownloadButtonView(self)) return;
+    for (UIGestureRecognizer *g in self.gestureRecognizers) {
+        if (g.name && [g.name isEqualToString:@"uyt.kidsdownload"]) return;
+    }
+    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc]
+        initWithTarget:[UYTKidsDownloadTarget shared] action:@selector(tapped:)];
+    tap.name = @"uyt.kidsdownload";
+    tap.cancelsTouchesInView = YES;   // uYou replaces YT's sheet either way
+    self.userInteractionEnabled = YES;
+    self.alpha = 1.0;
+    [self addGestureRecognizer:tap];
+}
+%end
+
 # pragma mark - Other hooks
 
 %hook YTAppDelegate
